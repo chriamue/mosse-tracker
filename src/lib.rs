@@ -59,7 +59,7 @@ impl MultiMosseTracker {
 
         // create a new tracker for this target and train it
         let mut new_tracker = MosseTracker::new(&self.settings);
-        new_tracker.train(frame, coords);
+        new_tracker.train_frame(frame, coords);
 
         // add the tracker to the map
         self.trackers.push((id, 0, new_tracker));
@@ -199,7 +199,7 @@ impl MosseTracker {
     }
 
     // Train a new filter on the first frame in which the object occurs
-    pub fn train(&mut self, input_frame: &GrayImage, target_center: (u32, u32)) {
+    pub fn train_frame(&mut self, input_frame: &GrayImage, target_center: (u32, u32)) {
         // store the target center as the current
         self.current_target_center = target_center;
 
@@ -211,17 +211,35 @@ impl MosseTracker {
             target_center,
         );
 
+        self.train(vec![window])
+    }
+
+    pub fn train(&mut self, train_images: Vec<&GrayImage>) {
+        // scale train images to window size
+        let windows: Vec<GrayImage> = train_images
+            .into_iter()
+            .map(|target_image| {
+                image::imageops::resize(
+                    target_image,
+                    self.window_size,
+                    self.window_size,
+                    image::imageops::Nearest,
+                )
+            })
+            .collect();
+
         #[cfg(debug_assertions)]
         {
-            window.save("WINDOW.png").unwrap();
+            windows[0].save("WINDOW.png").unwrap();
         }
 
         // Chain these iterators together.
         // Note that we add the initial, unperturbed training frame as first in line.
-        let training_frames = std::iter::once(window)
-            .cloned()
-            .chain(utils::rotated_frames(&window))
-            .chain(utils::scaled_frames(&window));
+
+        let training_frames = windows
+            .iter()
+            .map(|window| utils::rotated_frames(&window).chain(utils::scaled_frames(&window)))
+            .flatten();
 
         let mut training_frame_count = 0;
         for training_frame in training_frames {
