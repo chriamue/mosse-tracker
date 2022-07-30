@@ -2,7 +2,7 @@ extern crate image;
 extern crate imageproc;
 extern crate rustfft;
 
-use image::{imageops, GrayImage, ImageBuffer, Luma};
+use image::{GrayImage, ImageBuffer, Luma};
 use imageproc::geometric_transformations::Projection;
 use imageproc::geometric_transformations::{rotate_about_center, warp, Interpolation};
 use rustfft::num_complex::Complex;
@@ -206,7 +206,7 @@ impl MosseTracker {
         self.current_target_center = target_center;
 
         // cut out the training template by cropping
-        let window = &window_crop(
+        let window = &utils::window_crop(
             input_frame,
             self.window_size,
             self.window_size,
@@ -322,7 +322,7 @@ impl MosseTracker {
 
     pub fn track_new_frame(&mut self, frame: &GrayImage) -> Prediction {
         // cut out the training template by cropping
-        let window = window_crop(
+        let window = utils::window_crop(
             frame,
             self.window_size,
             self.window_size,
@@ -353,7 +353,7 @@ impl MosseTracker {
             .unwrap(); // we can unwrap the result of max_by(), as we are sure filtered.len() > 0
 
         // convert the array index of the max to the coordinates in the window
-        let max_coord_in_window = index_to_coords(self.window_size, maxind as u32);
+        let max_coord_in_window = utils::index_to_coords(self.window_size, maxind as u32);
 
         let window_half = (self.window_size / 2) as i32;
         let x_delta = max_coord_in_window.0 as i32 - window_half;
@@ -399,7 +399,7 @@ impl MosseTracker {
     // update the filter
     fn update(&mut self, frame: &GrayImage) {
         // cut out the training template by cropping
-        let window = window_crop(
+        let window = utils::window_crop(
             frame,
             self.window_size,
             self.window_size,
@@ -462,34 +462,10 @@ impl MosseTracker {
         let imfilter = h.iter().map(|c| c.im).collect();
 
         return (
-            to_imgbuf(&realfilter, self.window_size, self.window_size),
-            to_imgbuf(&imfilter, self.window_size, self.window_size),
+            utils::to_imgbuf(&realfilter, self.window_size, self.window_size),
+            utils::to_imgbuf(&imfilter, self.window_size, self.window_size),
         );
     }
-}
-
-fn window_crop(
-    input_frame: &GrayImage,
-    window_width: u32,
-    window_height: u32,
-    center: (u32, u32),
-) -> GrayImage {
-    let window = imageops::crop(
-        &mut input_frame.clone(),
-        center
-            .0
-            .saturating_sub(window_width / 2)
-            .min(input_frame.width() - window_width),
-        center
-            .1
-            .saturating_sub(window_height / 2)
-            .min(input_frame.height() - window_height),
-        window_width,
-        window_height,
-    )
-    .to_image();
-
-    return window;
 }
 
 fn build_target(window_width: u32, window_height: u32) -> Vec<f32> {
@@ -524,7 +500,7 @@ pub fn dump_target(window_width: u32, window_height: u32) -> ImageBuffer<Luma<u8
 
     let normalized = trgt.iter().map(|a| a * 255.0).collect();
 
-    return to_imgbuf(&normalized, window_width, window_height);
+    return utils::to_imgbuf(&normalized, window_width, window_height);
 }
 
 fn compute_psr(
@@ -566,21 +542,6 @@ fn compute_psr(
     let psr = (max - mean_sl) / sd_sl;
 
     return psr;
-}
-
-fn index_to_coords(width: u32, index: u32) -> (u32, u32) {
-    // modulo/remainder ops are theoretically O(1)
-    // checked_rem returns None if rhs == 0, which would indicate an upstream error (width == 0).
-    let x = index.checked_rem(width).unwrap();
-
-    // checked sub returns None if overflow occurred, which is also a panicable offense.
-    // checked_div returns None if rhs == 0, which would indicate an upstream error (width == 0).
-    let y = (index.checked_sub(x).unwrap()).checked_div(width).unwrap();
-    return (x, y);
-}
-
-pub fn to_imgbuf(buf: &Vec<f32>, width: u32, height: u32) -> ImageBuffer<Luma<u8>, Vec<u8>> {
-    ImageBuffer::from_vec(width, height, buf.iter().map(|c| *c as u8).collect()).unwrap()
 }
 
 // TODO: below tests are used as a scratch pad and for syntax experiments, not serious unit testing.
