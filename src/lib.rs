@@ -12,6 +12,8 @@ use std::cmp::Ordering;
 use std::f32;
 use std::sync::Arc;
 
+pub mod utils;
+
 // TODO: use constant declarations wherever possible
 // TODO: refactor the unwrap statement into match statements wherever we can't be certain a result exists.
 // TODO: behaviour at edge of frame: target may not leave frame, but filter will screw up anyway due to cropping. Move target coord freely within template?
@@ -31,42 +33,6 @@ use std::sync::Arc;
 // TODO: update routine can use more in-place modifications to reduce space complexity and allocs
 // TODO: update routine: benchmark initialization of Gaussian peak on target coordinates.
 // TODO: in general: remove allocating functions by reusing buffers where possible (such as self.prev's)
-
-fn preprocess(image: &GrayImage) -> Vec<f32> {
-    let mut prepped: Vec<f32> = image
-        .pixels()
-        // convert the pixel to u8 and then to f32
-        .map(|p| p[0] as f32)
-        // add 1, and take the natural logarithm
-        .map(|p| (p + 1.0).ln())
-        .collect();
-
-    // normalize to mean = 0 (subtract image-wide mean from each pixel)
-    let sum: f32 = prepped.iter().sum();
-    let mean: f32 = sum / prepped.len() as f32;
-    prepped.iter_mut().for_each(|p| *p = *p - mean);
-
-    // normalize to norm = 1, if possible
-    let u: f32 = prepped.iter().map(|a| a * a).sum();
-    let norm = u.sqrt();
-    if norm != 0.0 {
-        prepped.iter_mut().for_each(|e| *e = *e / norm)
-    }
-
-    // multiply each pixel by a cosine window
-    let (width, height) = image.dimensions();
-    let mut position = 0;
-    for i in 0..width {
-        for j in 0..height {
-            let cww = ((f32::consts::PI * i as f32) / (width - 1) as f32).sin();
-            let cwh = ((f32::consts::PI * j as f32) / (height - 1) as f32).sin();
-            prepped[position] = cww.min(cwh) * prepped[position];
-            position += 1;
-        }
-    }
-
-    return prepped;
-}
 
 type Identifier = u32;
 
@@ -301,7 +267,7 @@ impl MosseTracker {
         let mut training_frame_count = 0;
         for training_frame in training_frames {
             // preprocess the training frame using preprocess()
-            let vectorized = preprocess(&training_frame);
+            let vectorized = utils::preprocess(&training_frame);
 
             // calculate the 2D FFT of the preprocessed frame: FFT(fi) = Fi
             let Fi = self.compute_2dfft(vectorized);
@@ -364,7 +330,7 @@ impl MosseTracker {
         );
 
         // preprocess the image using preprocess()
-        let vectorized = preprocess(&window);
+        let vectorized = utils::preprocess(&window);
 
         // calculate the 2D FFT of the preprocessed image: FFT(fi) = Fi
         let Fi = self.compute_2dfft(vectorized);
@@ -441,7 +407,7 @@ impl MosseTracker {
         );
 
         // preprocess the image using preprocess()
-        let vectorized = preprocess(&window);
+        let vectorized = utils::preprocess(&window);
 
         // calculate the 2D FFT of the preprocessed image: FFT(fi) = Fi
         let new_Fi = self.compute_2dfft(vectorized);
