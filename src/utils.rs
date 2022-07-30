@@ -1,6 +1,8 @@
 use image::{imageops, GrayImage, ImageBuffer, Luma};
 use imageproc::geometric_transformations::{rotate_about_center, warp, Interpolation, Projection};
+use rustfft::{num_complex::Complex, Fft};
 use std::f32;
+use std::sync::Arc;
 
 pub fn preprocess(image: &GrayImage) -> Vec<f32> {
     let mut prepped: Vec<f32> = image
@@ -119,10 +121,24 @@ pub fn scaled_frames(frame: &GrayImage) -> impl Iterator<Item = GrayImage> + '_ 
     scaled_frames
 }
 
+pub fn compute_2dfft(imagedata: Vec<f32>, fft: &Arc<dyn Fft<f32>>) -> Vec<Complex<f32>> {
+    let mut buffer: Vec<Complex<f32>> = imagedata
+        .into_iter()
+        .map(|p| Complex::new(p as f32, 0.0))
+        .collect();
+
+    fft.process(&mut buffer);
+
+    return buffer;
+}
+
 #[cfg(test)]
 mod tests {
 
+    use std::vec;
+
     use super::*;
+    use rustfft::FftPlanner;
 
     #[test]
     fn preprocess_size() {
@@ -184,5 +200,19 @@ mod tests {
         let mut frames = rotated_frames(&image);
         assert!(frames.next().is_some());
         assert_eq!(frames.next().unwrap().dimensions(), image.dimensions());
+    }
+
+    #[test]
+    fn test_2dfft() {
+        let width: u32 = 4;
+        let height: u32 = 8;
+        let length = (width * height) as usize;
+        let mut planner: FftPlanner<f32> = FftPlanner::new();
+        let fft = planner.plan_fft_forward(length);
+
+        let image = GrayImage::new(32, 32);
+        let vectorized = preprocess(&image);
+        let fft_2d = compute_2dfft(vectorized.clone(), &fft);
+        assert_eq!(vectorized.len(), fft_2d.len());
     }
 }

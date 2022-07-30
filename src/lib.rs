@@ -105,6 +105,7 @@ impl MultiMosseTracker {
     }
 }
 
+#[derive(Debug)]
 pub struct Prediction {
     pub location: (u32, u32),
     pub psr: f32,
@@ -192,18 +193,6 @@ impl MosseTracker {
         };
     }
 
-    fn compute_2dfft(&self, imagedata: Vec<f32>) -> Vec<Complex<f32>> {
-        let mut buffer: Vec<Complex<f32>> = imagedata
-            .into_iter()
-            .map(|p| Complex::new(p as f32, 0.0))
-            .collect();
-
-        // fft.process() CONSUMES the input buffer as scratch space, make sure it is not reused
-        self.fft.process(&mut buffer);
-
-        return buffer;
-    }
-
     // Train a new filter on the first frame in which the object occurs
     pub fn train_frame(&mut self, input_frame: &GrayImage, target_center: (u32, u32)) {
         // store the target center as the current
@@ -253,7 +242,7 @@ impl MosseTracker {
             let vectorized = utils::preprocess(&training_frame);
 
             // calculate the 2D FFT of the preprocessed frame: FFT(fi) = Fi
-            let Fi = self.compute_2dfft(vectorized);
+            let Fi = utils::compute_2dfft(vectorized, &self.fft);
 
             //  compute the complex conjugate of Fi, Fi*.
             let Fi_star: Vec<Complex<f32>> = Fi.iter().map(|e| e.conj()).collect();
@@ -303,24 +292,19 @@ impl MosseTracker {
         }
     }
 
-    pub fn track_new_frame(&mut self, frame: &GrayImage) -> Prediction {
-        // cut out the training template by cropping
-        let window = utils::window_crop(
-            frame,
-            self.window_size,
-            self.window_size,
-            self.current_target_center,
-        );
-
-        // preprocess the image using preprocess()
-        let vectorized = utils::preprocess(&window);
+    pub fn predict(&self, frame: &GrayImage) -> Prediction {
+        let vectorized = utils::preprocess(frame);
+        let multiplier = vectorized.len() / self.filter.len();
 
         // calculate the 2D FFT of the preprocessed image: FFT(fi) = Fi
-        let Fi = self.compute_2dfft(vectorized);
+        let Fi = utils::compute_2dfft(vectorized, &self.fft);
 
         // elementwise multiplication of F with filter H gives Gi
-        let mut corr_map_gi: Vec<Complex<f32>> =
-            Fi.iter().zip(&self.filter).map(|(a, b)| a * b).collect();
+        let mut corr_map_gi: Vec<Complex<f32>> = Fi
+            .iter()
+            .zip(&self.filter.repeat(multiplier))
+            .map(|(a, b)| a * b)
+            .collect();
 
         // NOTE: Gi is garbage after this call
         self.inv_fft.process(&mut corr_map_gi);
@@ -336,11 +320,35 @@ impl MosseTracker {
             .unwrap(); // we can unwrap the result of max_by(), as we are sure filtered.len() > 0
 
         // convert the array index of the max to the coordinates in the window
-        let max_coord_in_window = utils::index_to_coords(self.window_size, maxind as u32);
+        let max_coord_in_window = utils::index_to_coords(frame.width(), maxind as u32);
+
+        let psr = compute_psr(
+            &corr_map_gi,
+            frame.width(),
+            frame.height(),
+            max_complex.re,
+            max_coord_in_window,
+        );
+        Prediction {
+            location: max_coord_in_window,
+            psr,
+        }
+    }
+
+    pub fn track_new_frame(&mut self, frame: &GrayImage) -> Prediction {
+        // cut out the training template by cropping
+        let window = utils::window_crop(
+            frame,
+            self.window_size,
+            self.window_size,
+            self.current_target_center,
+        );
+
+        let prediction = self.predict(&window);
 
         let window_half = (self.window_size / 2) as i32;
-        let x_delta = max_coord_in_window.0 as i32 - window_half;
-        let y_delta = max_coord_in_window.1 as i32 - window_half;
+        let x_delta = prediction.location.0 as i32 - window_half;
+        let y_delta = prediction.location.1 as i32 - window_half;
         let x_max = self.frame_width as i32 - window_half;
         let y_max = self.frame_height as i32 - window_half;
 
@@ -365,13 +373,7 @@ impl MosseTracker {
 
         // compute PSR
         // Note that we re-use the computed max and its coordinate for downstream simplicity
-        self.last_psr = compute_psr(
-            &corr_map_gi,
-            self.window_size,
-            self.window_size,
-            max_complex.re,
-            max_coord_in_window,
-        );
+        self.last_psr = prediction.psr;
 
         return Prediction {
             location: self.current_target_center,
@@ -393,7 +395,7 @@ impl MosseTracker {
         let vectorized = utils::preprocess(&window);
 
         // calculate the 2D FFT of the preprocessed image: FFT(fi) = Fi
-        let new_Fi = self.compute_2dfft(vectorized);
+        let new_Fi = utils::compute_2dfft(vectorized, &self.fft);
 
         //// Update the filter using the prediction
         //  compute the complex conjugate of Fi, Fi*.
@@ -601,5 +603,36 @@ mod tests {
                 .current_target_center,
             (10, 0)
         );
+    }
+
+    #[test]
+    fn prediction() {
+        let width = 128;
+        let height = 128;
+        let mut frame = GrayImage::new(width, height);
+        *frame.get_pixel_mut(50, 50) = Luma([255]);
+        let settings = MosseTrackerSettings {
+            window_size: 32,
+            width,
+            height,
+            regularization: 0.001,
+            learning_rate: 0.05,
+            psr_threshold: 7.0,
+        };
+        let mut tracker = MosseTracker::new(&settings);
+        tracker.train_frame(&frame, (50, 50));
+
+        *frame.get_pixel_mut(50, 50) = Luma([0]);
+        *frame.get_pixel_mut(60, 60) = Luma([255]);
+        let prediction = tracker.track_new_frame(&frame);
+        println!("{:?}", prediction);
+        assert_ne!(prediction.location, (50, 50));
+        assert_eq!(prediction.location, (60, 60));
+        assert!(prediction.psr > 10.0);
+        let prediction = tracker.predict(&frame);
+        println!("{:?}", prediction);
+        assert_ne!(prediction.location, (50, 50));
+        assert_eq!(prediction.location, (60, 60));
+        assert!(prediction.psr > 10.0);
     }
 }
