@@ -3,8 +3,6 @@ extern crate imageproc;
 extern crate rustfft;
 
 use image::{GrayImage, ImageBuffer, Luma};
-use imageproc::geometric_transformations::Projection;
-use imageproc::geometric_transformations::{rotate_about_center, warp, Interpolation};
 use rustfft::num_complex::Complex;
 use rustfft::num_traits::Zero;
 use rustfft::{Fft, FftPlanner};
@@ -218,51 +216,12 @@ impl MosseTracker {
             window.save("WINDOW.png").unwrap();
         }
 
-        // build an iterator that produces training frames that have been slightly rotated according to a theta value.
-        let rotated_frames = [
-            0.02, -0.02, 0.05, -0.05, 0.07, -0.07, 0.09, -0.09, 1.1, -1.1, 1.3, -1.3, 1.5, -1.5,
-            2.0, -2.0,
-        ]
-        .iter()
-        .map(|rad| {
-            // Rotate an image clockwise about its center by theta radians.
-            let training_frame =
-                rotate_about_center(window, *rad, Interpolation::Nearest, Luma([0]));
-
-            #[cfg(debug_assertions)]
-            {
-                training_frame
-                    .save(format!("training_frame_rotated_theta_{}.png", rad))
-                    .unwrap();
-            }
-
-            return training_frame;
-        });
-
-        // build an iterator that produces training frames that have been slightly scaled to various degrees ('zoomed')
-        let scaled_frames = [0.8, 0.9, 1.1, 1.2].into_iter().map(|scalefactor| {
-            let scale = Projection::scale(scalefactor, scalefactor);
-
-            let scaled_training_frame = warp(&window, &scale, Interpolation::Nearest, Luma([0]));
-
-            #[cfg(debug_assertions)]
-            {
-                scaled_training_frame
-                    .save(format!("training_frame_scaled_{}.png", scalefactor))
-                    .unwrap();
-            }
-
-            return scaled_training_frame;
-        });
-
         // Chain these iterators together.
         // Note that we add the initial, unperturbed training frame as first in line.
         let training_frames = std::iter::once(window)
             .cloned()
-            .chain(rotated_frames)
-            .chain(scaled_frames);
-        // TODO: scaling is not ready yet
-        // .chain(scaled_frames);
+            .chain(utils::rotated_frames(&window))
+            .chain(utils::scaled_frames(&window));
 
         let mut training_frame_count = 0;
         for training_frame in training_frames {

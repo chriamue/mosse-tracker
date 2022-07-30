@@ -1,4 +1,5 @@
 use image::{imageops, GrayImage, ImageBuffer, Luma};
+use imageproc::geometric_transformations::{rotate_about_center, warp, Interpolation, Projection};
 use std::f32;
 
 pub fn preprocess(image: &GrayImage) -> Vec<f32> {
@@ -76,6 +77,48 @@ pub fn index_to_coords(width: u32, index: u32) -> (u32, u32) {
     return (x, y);
 }
 
+pub fn rotated_frames(frame: &GrayImage) -> impl Iterator<Item = GrayImage> + '_ {
+    // build an iterator that produces training frames that have been slightly rotated according to a theta value.
+    let rotated_frames = [
+        0.02, -0.02, 0.05, -0.05, 0.07, -0.07, 0.09, -0.09, 1.1, -1.1, 1.3, -1.3, 1.5, -1.5, 2.0,
+        -2.0,
+    ]
+    .iter()
+    .map(|rad| {
+        // Rotate an image clockwise about its center by theta radians.
+        let training_frame = rotate_about_center(frame, *rad, Interpolation::Nearest, Luma([0]));
+
+        #[cfg(debug_assertions)]
+        {
+            training_frame
+                .save(format!("training_frame_rotated_theta_{}.png", rad))
+                .unwrap();
+        }
+
+        return training_frame;
+    });
+    rotated_frames
+}
+
+pub fn scaled_frames(frame: &GrayImage) -> impl Iterator<Item = GrayImage> + '_ {
+    // build an iterator that produces training frames that have been slightly scaled to various degrees ('zoomed')
+    let scaled_frames = [0.8, 0.9, 1.1, 1.2].into_iter().map(|scalefactor| {
+        let scale = Projection::scale(scalefactor, scalefactor);
+
+        let scaled_training_frame = warp(frame, &scale, Interpolation::Nearest, Luma([0]));
+
+        #[cfg(debug_assertions)]
+        {
+            scaled_training_frame
+                .save(format!("training_frame_scaled_{}.png", scalefactor))
+                .unwrap();
+        }
+
+        return scaled_training_frame;
+    });
+    scaled_frames
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -125,5 +168,21 @@ mod tests {
             index_to_coords(width, width * height - 1),
             (width - 1, height - 1)
         );
+    }
+
+    #[test]
+    fn test_rotated_frames() {
+        let image = GrayImage::new(32, 32);
+        let mut frames = rotated_frames(&image);
+        assert!(frames.next().is_some());
+        assert_eq!(frames.next().unwrap().dimensions(), image.dimensions());
+    }
+
+    #[test]
+    fn test_scaled_frames() {
+        let image = GrayImage::new(32, 32);
+        let mut frames = rotated_frames(&image);
+        assert!(frames.next().is_some());
+        assert_eq!(frames.next().unwrap().dimensions(), image.dimensions());
     }
 }
