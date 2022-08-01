@@ -261,7 +261,12 @@ impl MosseTracker {
 
         let training_frames = windows
             .iter()
-            .map(|window| utils::rotated_frames(&window).chain(utils::scaled_frames(&window)))
+            .map(|window| {
+                std::iter::once(window)
+                    .cloned()
+                    .chain(utils::rotated_frames(&window))
+                    .chain(utils::scaled_frames(&window))
+            })
             .flatten();
 
         let mut training_frame_count = 0;
