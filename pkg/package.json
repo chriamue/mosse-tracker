@@ -1,0 +1,15 @@
+{
+  "name": "mosse",
+  "collaborators": [
+    "Jurriaan Barkey Wolf <jjhbarkeywolf@gmail.com>"
+  ],
+  "version": "0.1.0",
+  "files": [
+    "mosse_bg.wasm",
+    "mosse.js",
+    "mosse.d.ts"
+  ],
+  "module": "mosse.js",
+  "types": "mosse.d.ts",
+  "sideEffects": false
+}
